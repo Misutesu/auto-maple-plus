@@ -23,6 +23,7 @@ class Notification_Target(LabelFrame):
 
         self.notif_settings_root = NotifSettings('Notifier Settings')
         self.webhook_url = tk.StringVar(value=self.notif_settings_root.get('WebhookURL'))
+        self.push_plus_token = tk.StringVar(value=self.notif_settings_root.get('PushPlusToken'))
         self.timezone = tk.StringVar(value=self.notif_settings_root.get('Timezone'))
 
         self.discordWebhookLabel = tk.Label(self, text="Discord Webhook URL")
@@ -30,17 +31,25 @@ class Notification_Target(LabelFrame):
         self.discordWebhookEntry = tk.Entry(self, textvariable=self.webhook_url)
         self.discordWebhookEntry.bind("<KeyRelease>", self._on_change)
         self.discordWebhookEntry.grid(row=0, column=1, sticky=tk.NSEW, padx=5, pady=5)
+
+        self.discordPushPlusLabel = tk.Label(self, text="PushPlus Token")
+        self.discordPushPlusLabel.grid(row=1, column=0, sticky=tk.NSEW, padx=5, pady=5)
+        self.discordPushPlusEntry = tk.Entry(self, textvariable=self.push_plus_token)
+        self.discordPushPlusEntry.bind("<KeyRelease>", self._on_change)
+        self.discordPushPlusEntry.grid(row=1, column=1, sticky=tk.NSEW, padx=5, pady=5)
+
         self.discordTimezoneLabel = tk.Label(self, text="Timezone")
-        self.discordTimezoneLabel.grid(row=1, column=0, sticky=tk.NSEW, padx=5, pady=5)
+        self.discordTimezoneLabel.grid(row=2, column=0, sticky=tk.NSEW, padx=5, pady=5)
         self.discordTimezoneEntry = tk.Entry(self, textvariable=self.timezone)
         self.discordTimezoneEntry.bind("<KeyRelease>", self._on_change)
-        self.discordTimezoneEntry.grid(row=1, column=1, sticky=tk.NSEW, padx=5, pady=5)
+        self.discordTimezoneEntry.grid(row=2, column=1, sticky=tk.NSEW, padx=5, pady=5)
 
         self.testMessage = tk.Button(self, text="Send Test Notification", command=self._send_test_notification).grid(
-            row=2, column=0, columnspan=2, padx=5, pady=5)
+            row=3, column=0, columnspan=2, padx=5, pady=5)
 
     def _on_change(self, *args):
         self.notif_settings_root.set('WebhookURL', self.webhook_url.get())
+        self.notif_settings_root.set('PushPlusToken', self.push_plus_token.get())
         self.notif_settings_root.set('Timezone', self.timezone.get())
         self.notif_settings_root.save_config()
 
@@ -53,5 +62,6 @@ class Notification_Target(LabelFrame):
 class NotifSettings(Configurable):
     DEFAULT_CONFIG = {
         'WebhookURL': 'NULL',
+        'PushPlusToken': 'NULL',
         'Timezone': 'UTC'
     }

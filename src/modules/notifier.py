@@ -14,28 +14,39 @@ from src.gui.notifier_settings.main import NotifSettings
 from src.gui.notifier_settings.notification_settings import NotificationSetting
 
 
-def get_alert_path(name):
-    return os.path.join(Notifier.ALERTS_DIR, f'{name}.mp3')
-
-
 class PushPlusNotifier:
     url = 'https://www.pushplus.plus/send/'
+    # token 57ecaa3c74ad4fde9d33b8e597314ba9
+
+    def __init__(self, token):
+        self.token = token
 
     def send(self, message):
+        if self is None:
+            print("PushPlusNotifier Error : token null")
+            return
         data = {
-            "token": "57ecaa3c74ad4fde9d33b8e597314ba9",
+            "token": self.token,
             "title": "AutoMaple",
             "content": message
         }
-        requests.post(self.url, json=data)
+        response = requests.post(self.url, json=data)
+        if response.json()["code"] !=200:
+            print(f"PushPlusNotifier Error : ${response.text}")
+
 
     def send_file(self, file_path):
+        if self is None:
+            print("PushPlusNotifier Error : token null")
+            return
         data = {
-            "token": "57ecaa3c74ad4fde9d33b8e597314ba9",
+            "token": self.token,
             "title": "AutoMaple",
             "content": '暂不支持图片:' + file_path
         }
-        requests.post(self.url, json=data)
+        response = requests.post(self.url, json=data)
+        if response.json()["code"] !=200:
+            print(f"PushPlusNotifier Error : ${response.text}")
 
 
 class Notifier:
@@ -54,7 +65,7 @@ class Notifier:
         self.lastAlertTimeDict = {}
         self.watchlist = {}
         try:
-            config.pushPlus = PushPlusNotifier()
+            config.pushPlus = PushPlusNotifier(NotifSettings('Notifier Settings').get('PushPlusToken'))
             config.webhook = SyncWebhook.from_url(NotifSettings('Notifier Settings').get('WebhookURL'))
             user_timezone = pytz.timezone(NotifSettings('Notifier Settings').get('Timezone'))
         except:
