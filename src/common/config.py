@@ -46,6 +46,7 @@ gui = None
 
 # Shares the webhook to all modules
 webhook = None
+pushPlus =None
 
 
 ##############################

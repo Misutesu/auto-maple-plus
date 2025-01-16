@@ -1,4 +1,8 @@
+import os
+import shutil
 import time
+from datetime import datetime
+
 import src.runesolvercore.gdi_capture as gdi_capture
 from interception import press
 import numpy as np
@@ -11,7 +15,8 @@ import math
 # DEFINE CV Variables
 RUNE_BGRA = (255, 102, 221, 255)
 INSIDE_CS_TEMPLATE = cv.imread('assets/insidecashshop.png', 0)
-CS_FAIL_TEMPLATE = cv.imread('assets/csFail.png',0)
+CS_FAIL_TEMPLATE = cv.imread('assets/csFail.png', 0)
+
 
 def find_arrow_directions(img, debug=False):
     bgr = cv.cvtColor(img, cv.COLOR_BGRA2BGR)
@@ -29,11 +34,12 @@ def find_arrow_directions(img, debug=False):
         return 5 <= h[r][c] <= 12 and s[r][c] >= 65 and v[r][c] >= 128
 
     def hue_is_valid(r1, c1, r2, c2, diff):
-        return abs(int(h[r1][c1]) - int(h[r2][c2])) <= diff and s[r2][c2] >= 150 and v[r2][c2] >= 150 and h[r2][c2] <= 70
+        return abs(int(h[r1][c1]) - int(h[r2][c2])) <= diff and s[r2][c2] >= 150 and v[r2][c2] >= 150 and h[r2][
+            c2] <= 70
 
     def near_gradient(r, c):
         for i, j in valid_gradient:
-            if abs(i-r) < 15 and abs(c-j) < 15:
+            if abs(i - r) < 15 and abs(c - j) < 15:
                 return True
         return False
 
@@ -96,10 +102,10 @@ def find_arrow_directions(img, debug=False):
             return None
 
     _, imw, _ = img.shape
-    rune_left_bound = math.trunc((imw - 500)/2)
+    rune_left_bound = math.trunc((imw - 500) / 2)
     rune_right_bound = rune_left_bound + 500
 
-    print("left: {}, right: {}".format(rune_left_bound,rune_right_bound))
+    print("left: {}, right: {}".format(rune_left_bound, rune_right_bound))
 
     # The rune captcha was observed to appear within this part of the application window on 1366x768 resolution.
     for r in range(150, 300):
@@ -125,6 +131,7 @@ def find_arrow_directions(img, debug=False):
 
     return sorted(directions, key=lambda x: x[1][1])
 
+
 def locate(self, *color):
     with gdi_capture.CaptureWindow(self.hwnd) as img:
         locations = []
@@ -147,32 +154,35 @@ def locate(self, *color):
                     count += 1
                 if count > 0:
                     x_pos = sum_x / count
-        
+
                     y_pos = sum_y / count
                     locations.append((x_pos, y_pos))
         return locations
 
+
 def get_rune_location(self):
-    location = locate(self,RUNE_BGRA)
+    location = locate(self, RUNE_BGRA)
     return location[0] if len(location) > 0 else None
+
 
 def enterCashshop(self):
     print("Entering Cashshop..")
     cashShopKey = self.config['Cash Shop']
     press(cashShopKey, 1)
     time.sleep(2)
-    while utils.multi_match(config.capture.frame,INSIDE_CS_TEMPLATE,threshold=0.9) == [] or utils.multi_match(config.capture.frame,CS_FAIL_TEMPLATE,threshold=0.9) != []:
+    while utils.multi_match(config.capture.frame, INSIDE_CS_TEMPLATE, threshold=0.9) == [] or utils.multi_match(
+            config.capture.frame, CS_FAIL_TEMPLATE, threshold=0.9) != []:
         if config.enabled == False:
             return True
-        print("Inside CS: {}".format(utils.multi_match(config.capture.frame,INSIDE_CS_TEMPLATE, threshold=0.8)))
-        print("CS Fail: {}".format(utils.multi_match(config.capture.frame,INSIDE_CS_TEMPLATE, threshold=0.8)))
+        print("Inside CS: {}".format(utils.multi_match(config.capture.frame, INSIDE_CS_TEMPLATE, threshold=0.8)))
+        print("CS Fail: {}".format(utils.multi_match(config.capture.frame, INSIDE_CS_TEMPLATE, threshold=0.8)))
         print("Fail to enter cash shop, trying again")
-        press("esc" ,1)
+        press("esc", 1)
         time.sleep(0.5)
         press(cashShopKey, 1)
         time.sleep(2)
     print("Exiting Cashshop")
-    while utils.multi_match(config.capture.frame,INSIDE_CS_TEMPLATE,threshold=0.9) != []:
+    while utils.multi_match(config.capture.frame, INSIDE_CS_TEMPLATE, threshold=0.9) != []:
         if config.enabled == False:
             return True
         press("esc", 1)
@@ -182,12 +192,14 @@ def enterCashshop(self):
         press("enter", 1)
         time.sleep(2.5)
 
+
 def get_rune_image(win):
-        with gdi_capture.CaptureWindow(win) as img:
-            return img.copy()
+    with gdi_capture.CaptureWindow(win) as img:
+        return img.copy()
+
 
 def solve_rune_raw(self):
-    #assumes user is already at rune
+    # assumes user is already at rune
     attempts = 0
     while attempts <= 3 and config.enabled == True:
         npcChatKey = self.config['NPC/Gather']
@@ -206,7 +218,7 @@ def solve_rune_raw(self):
             print(f"Directions: {directions}.")
             for d, _ in directions:
                 press(d, 1)
-            
+
             time.sleep(1)
             rune_location = get_rune_location(self)
             if rune_location is None:
@@ -221,9 +233,19 @@ def solve_rune_raw(self):
             time.sleep(1.5)
             attempts += 1
             if attempts > 3:
-                enterCashshop(self)
+                misc_settings = config.gui.settings.miscsettings
+                cs_reset_toggle = misc_settings.cs_reset_toggle.get()
+                if cs_reset_toggle:
+                    enterCashshop(self)
                 attempts = 0
                 time.sleep(0.5)
                 return False
+
+        backup_dir = "assets/rune_bak/"
+        os.makedirs(backup_dir, exist_ok=True)
+        time_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        time_str += f" Directions: {directions}"
+        backup_file = os.path.join(backup_dir, f"rune_{time_str}.png")
+        shutil.copy(output, backup_file)
         time.sleep(3)
     return False

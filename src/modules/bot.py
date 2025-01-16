@@ -7,8 +7,8 @@ import cv2
 import inspect
 import importlib
 import traceback
-from interception import press
 from os.path import splitext, basename
+from src.common.vkeys import press, key_down, key_up
 from src.common import config, utils
 from src.routine import components
 from src.routine.routine import Routine
@@ -17,8 +17,6 @@ from src.routine.components import Point
 from src.common.interfaces import Configurable
 from src.runesolvercore.runesolver import enterCashshop
 from src.runesolvercore.runesolver import solve_rune_raw
-
-
 
 # The rune's buff icon
 RUNE_BUFF_TEMPLATE = cv2.imread('assets/rune_buff_template.jpg', 0)
@@ -46,9 +44,9 @@ class Bot(Configurable):
 
         self.rune_active = False
         self.rune_pos = (0, 0)
-        self.rune_closest_pos = (0, 0)      # Location of the Point closest to rune
+        self.rune_closest_pos = (0, 0)  # Location of the Point closest to rune
         self.submodules = []
-        self.command_book = None            # CommandBook instance
+        self.command_book = None  # CommandBook instance
         # self.module_name = None
         # self.buff = components.Buff()
 
@@ -71,7 +69,7 @@ class Bot(Configurable):
         :return:    None
         """
 
-        self.update_submodules()
+        # self.update_submodules()
         print('\n[~] Started main bot loop')
         self.thread.start()
 
@@ -85,7 +83,7 @@ class Bot(Configurable):
         last_fed = time.time()
         last_enteredCS = time.time()
         last_30m_expbuffed = None
-        
+
         while True:
             if config.enabled and len(config.routine) > 0:
                 # Buff and feed pets
@@ -104,13 +102,13 @@ class Bot(Configurable):
                 cs_reset_toggle = misc_settings.cs_reset_toggle.get()
                 cs_reset_interval = misc_settings.cs_reset_interval.get()
 
-                #feed pets
+                # feed pets
                 now = time.time()
                 if auto_feed and now - last_fed > 1200 / num_pets:
                     press(self.config['Feed pet'], 1)
                     last_fed = now
 
-                #buff exp buff
+                # buff exp buff
                 if auto_buff_exp:
                     if last_30m_expbuffed == None:
                         press(self.config['2x EXP Buff'], 1)
@@ -124,8 +122,9 @@ class Bot(Configurable):
                         press(self.config['Wealth Acquisition'], 1)
                         time.sleep(0.4)
                         last_30m_expbuffed = now
-                    config.gui.view.monitoringconsole.set_nextexpbuffstat(str(round((expbuff_use_interval*900 - (now - last_30m_expbuffed))))+"s")
-                    if now - last_30m_expbuffed > expbuff_use_interval*900 + 10:
+                    config.gui.view.monitoringconsole.set_nextexpbuffstat(
+                        str(round((expbuff_use_interval * 900 - (now - last_30m_expbuffed)))) + "s")
+                    if now - last_30m_expbuffed > expbuff_use_interval * 900 + 10:
                         press(self.config['2x EXP Buff'], 1)
                         time.sleep(0.2)
                     if now - last_30m_expbuffed > 1800 + 10:
@@ -144,8 +143,9 @@ class Bot(Configurable):
                     config.gui.view.monitoringconsole.set_nextexpbuffstat("Disabled")
 
                 # Enter cash shop to reset DC timer
-                config.gui.view.monitoringconsole.set_nextcsresetstat(str(round((cs_reset_interval*3600 - (now - last_enteredCS))))+"s")
-                if cs_reset_toggle and now - last_enteredCS > cs_reset_interval*3600:
+                config.gui.view.monitoringconsole.set_nextcsresetstat(
+                    str(round((cs_reset_interval * 3600 - (now - last_enteredCS)))) + "s")
+                if cs_reset_toggle and now - last_enteredCS > cs_reset_interval * 3600:
                     print("Entering cash shop for reset")
                     enterCashshop(self)
                     last_enteredCS = now
@@ -175,7 +175,7 @@ class Bot(Configurable):
         :param sct:     The mss instance object with which to take screenshots.
         :return:        None
         """
-        
+
         move = self.command_book['move']
         move(*self.rune_pos).execute()
         adjust = self.command_book['adjust']
@@ -190,7 +190,7 @@ class Bot(Configurable):
             self.command_book = CommandBook(file)
             config.gui.settings.update_class_bindings()
         except ValueError:
-            pass    # TODO: UI warning popup, say check cmd for errors
+            pass  # TODO: UI warning popup, say check cmd for errors
         #
         # utils.print_separator()
         # print(f"[~] Loading command book '{basename(file)}':")
@@ -282,16 +282,16 @@ class Bot(Configurable):
                     url = lines[i + 2].split('=')[1].strip()
                     self.submodules.append(path)
                     try:
-                        repo.git.clone(url, path)       # First time loading submodule
+                        repo.git.clone(url, path)  # First time loading submodule
                         print(f" -  Initialized submodule '{path}'")
                     except git.exc.GitCommandError:
                         sub_repo = git.Repo(path)
                         if not force:
-                            sub_repo.git.stash()        # Save modified content
+                            sub_repo.git.stash()  # Save modified content
                         sub_repo.git.fetch('origin', 'main')
                         sub_repo.git.reset('--hard', 'FETCH_HEAD')
                         if not force:
-                            try:                # Restore modified content
+                            try:  # Restore modified content
                                 sub_repo.git.checkout('stash', '--', '.')
                                 print(f" -  Updated submodule '{path}', restored local changes")
                             except git.exc.GitCommandError:
