@@ -1,3 +1,5 @@
 [submodule "resources"]
 	path = resources
 	url = git@github.com:Misutesu/auto-maple-resources.git
+[submodule "./resources"]
+	url = git@github.com:Misutesu/auto-maple-resources.git
