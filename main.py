@@ -2,6 +2,10 @@ import mysql.connector
 from collections import defaultdict
 import re
 from datetime import datetime
+import threading
+from queue import Queue
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 def connect_to_database(database_name=None):
     """连接到数据库，如果database_name为None，则不指定数据库"""
@@ -10,7 +14,18 @@ def connect_to_database(database_name=None):
             host="10.134.84.197",
             user="root",
             password="zhang3660628",
-            database=database_name
+            database=database_name,
+            buffered=True,
+            # 优化数据库连接配置
+            pool_name="mypool",
+            pool_size=5,
+            # 优化批量插入性能
+            allow_local_infile=True,
+            autocommit=False,
+            raise_on_warnings=False,
+            get_warnings=False,
+            # 增加缓冲区大小
+            max_allowed_packet=256*1024*1024
         )
         return connection
     except mysql.connector.Error as err:
@@ -42,7 +57,10 @@ def create_new_database():
                 total_points INT DEFAULT 0,
                 max_altitude FLOAT,
                 min_altitude FLOAT,
-                UNIQUE KEY unique_callsign (callsign)
+                UNIQUE KEY unique_callsign (callsign),
+                INDEX idx_callsign (callsign),
+                INDEX idx_first_seen (first_seen),
+                INDEX idx_last_seen (last_seen)
             )
         """)
 
@@ -60,7 +78,9 @@ def create_new_database():
                 speed_y VARCHAR(20),
                 speed_z VARCHAR(20),
                 raw_data TEXT,
-                FOREIGN KEY (flight_id) REFERENCES flights(flight_id)
+                FOREIGN KEY (flight_id) REFERENCES flights(flight_id),
+                INDEX idx_flight_id (flight_id),
+                INDEX idx_msg_time (msg_time)
             )
         """)
 
@@ -228,12 +248,12 @@ def is_valid_track_data(track_data):
 def process_and_store_table_data(source_connection, new_connection, table_name):
     """处理单个表的数据并存储"""
     print(f"\n正在处理表: {table_name}")
-    source_cursor = source_connection.cursor(dictionary=True)
+    source_cursor = source_connection.cursor(dictionary=True, buffered=True)
     new_cursor = new_connection.cursor()
     
     try:
         # 分批次查询数据
-        batch_size = 10000  # 每次处理10000条数据
+        batch_size = 50000  # 增加批处理大小
         offset = 0
         total_processed = 0
         total_valid = 0
@@ -248,10 +268,11 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
         }
         
         # 用于批量插入的缓存
-        flight_updates = {}  # 存储航班更新信息
-        track_points_batch = []  # 存储航迹点批量插入数据
+        flight_updates = {}
         
         while True:
+            start_time = time.time()
+            
             # 查询一批数据
             query = f"SELECT * FROM `{table_name}` LIMIT {batch_size} OFFSET {offset}"
             source_cursor.execute(query)
@@ -322,11 +343,13 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
                     total_valid += 1
             
             # 处理航班数据
+            flight_values = []
+            track_points_values = []
+            
             for callsign, track_points in flight_data.items():
                 if not track_points:
                     continue
 
-                # 获取时间范围和高度范围
                 msg_times = [point[1] for point in track_points]
                 altitudes = [float(point[0].get('FL', '0')) for point in track_points]
                 
@@ -339,110 +362,83 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
                 max_altitude = max(altitudes)
                 min_altitude = min(altitudes)
 
-                # 更新航班信息缓存
-                if callsign not in flight_updates:
-                    flight_updates[callsign] = {
-                        'first_seen': first_seen,
-                        'last_seen': last_seen,
-                        'total_points': total_points,
-                        'max_altitude': max_altitude,
-                        'min_altitude': min_altitude,
-                        'points': []
-                    }
-                else:
-                    existing = flight_updates[callsign]
-                    existing['first_seen'] = min(existing['first_seen'], first_seen)
-                    existing['last_seen'] = max(existing['last_seen'], last_seen)
-                    existing['total_points'] += total_points
-                    existing['max_altitude'] = max(existing['max_altitude'], max_altitude)
-                    existing['min_altitude'] = min(existing['min_altitude'], min_altitude)
-                
-                # 添加航迹点到缓存
-                flight_updates[callsign]['points'].extend(track_points)
+                # 准备航班数据
+                flight_values.append((
+                    callsign, 
+                    first_seen,
+                    last_seen,
+                    total_points,
+                    max_altitude,
+                    min_altitude
+                ))
 
-            # 每处理50000条记录或最后一批数据时，执行批量插入
-            if total_processed % 50000 == 0 or not rows:
-                # 批量更新航班信息
-                if flight_updates:
-                    # 首先插入或更新航班信息
-                    flight_values = []
-                    for callsign, data in flight_updates.items():
-                        flight_values.append((
-                            callsign, 
-                            data['first_seen'],
-                            data['last_seen'],
-                            data['total_points'],
-                            data['max_altitude'],
-                            data['min_altitude']
+            # 批量插入航班数据
+            if flight_values:
+                new_cursor.executemany("""
+                    INSERT INTO flights (
+                        callsign, first_seen, last_seen, total_points,
+                        max_altitude, min_altitude
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
+                    ON DUPLICATE KEY UPDATE 
+                        first_seen = LEAST(first_seen, VALUES(first_seen)),
+                        last_seen = GREATEST(last_seen, VALUES(last_seen)),
+                        total_points = total_points + VALUES(total_points),
+                        max_altitude = GREATEST(max_altitude, VALUES(max_altitude)),
+                        min_altitude = LEAST(min_altitude, VALUES(min_altitude))
+                """, flight_values)
+
+                # 获取所有航班的ID
+                callsigns = [f[0] for f in flight_values]
+                format_strings = ','.join(['%s'] * len(callsigns))
+                new_cursor.execute(
+                    f"SELECT flight_id, callsign FROM flights WHERE callsign IN ({format_strings})",
+                    callsigns
+                )
+                flight_ids = {row[1]: row[0] for row in new_cursor.fetchall()}
+
+                # 准备航迹点数据
+                for callsign, track_points in flight_data.items():
+                    flight_id = flight_ids[callsign]
+                    for point, msg_time in track_points:
+                        try:
+                            altitude = float(point.get('FL', '0'))
+                        except (ValueError, TypeError):
+                            altitude = 0
+
+                        vertical_speed = point.get('SPDZGPS', point.get('SPDZ', ''))
+                        
+                        track_points_values.append((
+                            flight_id,
+                            msg_time,
+                            point.get('TRACKID', ''),
+                            point.get('LONGTD', ''),
+                            point.get('LATTD', ''),
+                            altitude,
+                            point.get('SPDX', ''),
+                            point.get('SPDY', ''),
+                            vertical_speed,
+                            str(point)
                         ))
 
-                    # 批量插入或更新航班信息
+                # 批量插入航迹点数据
+                if track_points_values:
                     new_cursor.executemany("""
-                        INSERT INTO flights (
-                            callsign, first_seen, last_seen, total_points,
-                            max_altitude, min_altitude
-                        ) VALUES (%s, %s, %s, %s, %s, %s)
-                        ON DUPLICATE KEY UPDATE 
-                            first_seen = LEAST(first_seen, VALUES(first_seen)),
-                            last_seen = GREATEST(last_seen, VALUES(last_seen)),
-                            total_points = total_points + VALUES(total_points),
-                            max_altitude = GREATEST(max_altitude, VALUES(max_altitude)),
-                            min_altitude = LEAST(min_altitude, VALUES(min_altitude))
-                    """, flight_values)
+                        INSERT INTO track_points (
+                            flight_id, msg_time, track_id, longitude, latitude,
+                            altitude, speed_x, speed_y, speed_z, raw_data
+                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """, track_points_values)
 
-                    # 获取所有航班的ID
-                    callsign_list = list(flight_updates.keys())
-                    format_strings = ','.join(['%s'] * len(callsign_list))
-                    new_cursor.execute(
-                        f"SELECT flight_id, callsign FROM flights WHERE callsign IN ({format_strings})",
-                        callsign_list
-                    )
-                    flight_ids = {row['callsign']: row['flight_id'] for row in new_cursor.fetchall()}
+                new_connection.commit()
 
-                    # 准备航迹点数据进行批量插入
-                    track_points_values = []
-                    for callsign, data in flight_updates.items():
-                        flight_id = flight_ids[callsign]
-                        for point, msg_time in data['points']:
-                            try:
-                                altitude = float(point.get('FL', '0'))
-                            except (ValueError, TypeError):
-                                altitude = 0
-
-                            vertical_speed = point.get('SPDZGPS', point.get('SPDZ', ''))
-                            
-                            track_points_values.append((
-                                flight_id,
-                                msg_time,
-                                point.get('TRACKID', ''),
-                                point.get('LONGTD', ''),
-                                point.get('LATTD', ''),
-                                altitude,
-                                point.get('SPDX', ''),
-                                point.get('SPDY', ''),
-                                vertical_speed,
-                                str(point)
-                            ))
-
-                    # 批量插入航迹点数据
-                    if track_points_values:
-                        new_cursor.executemany("""
-                            INSERT INTO track_points (
-                                flight_id, msg_time, track_id, longitude, latitude,
-                                altitude, speed_x, speed_y, speed_z, raw_data
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        """, track_points_values)
-
-                    # 提交事务
-                    new_connection.commit()
-
-                    # 清空缓存
-                    flight_updates.clear()
-                    track_points_values.clear()
-
+            end_time = time.time()
+            processing_time = end_time - start_time
+            records_per_second = len(rows) / processing_time if processing_time > 0 else 0
+            
             print(f"已处理 {offset + len(rows)} 条记录:")
             print(f"  - 符合条件的记录: {filtered_count} 条")
             print(f"  - 无效数据: {invalid_count} 条")
+            print(f"  - 处理速度: {records_per_second:.2f} 记录/秒")
             offset += batch_size
             
         # 打印该表的总结信息
@@ -466,40 +462,52 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
         source_cursor.close()
         new_cursor.close()
 
+def process_tables_parallel(tables, max_workers=4):
+    """并行处理多个表"""
+    def worker(table):
+        source_conn = connect_to_database("planedata")
+        new_conn = connect_to_database("plane_data_new")
+        if source_conn and new_conn:
+            try:
+                process_and_store_table_data(source_conn, new_conn, table)
+            finally:
+                source_conn.close()
+                new_conn.close()
+
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        executor.map(worker, tables)
+
 def main():
     # 创建新数据库和表
     if not create_new_database():
         print("创建新数据库失败")
         return
 
-    # 连接到原数据库和新数据库
-    source_connection = connect_to_database("planedata")
-    new_connection = connect_to_database("plane_data_new")
-    
-    if not source_connection or not new_connection:
-        print("数据库连接失败")
-        return
-
     try:
         # 获取所有表名
+        source_connection = connect_to_database("planedata")
+        if not source_connection:
+            return
+
         tables = get_all_tables(source_connection)
+        source_connection.close()
+
         total_tables = len(tables)
-        
         print(f"共找到 {total_tables} 个表")
         print("筛选条件: 高度 <= 2400 且 航班号以'B'开头")
         
-        # 逐个处理每个表
-        for i, table in enumerate(tables, 1):
-            print(f"\n处理进度: {i}/{total_tables}")
-            process_and_store_table_data(source_connection, new_connection, table)
-            
-        print("\n所有数据迁移完成！")
+        # 并行处理表
+        start_time = time.time()
+        process_tables_parallel(tables)
+        end_time = time.time()
+        
+        total_time = end_time - start_time
+        print(f"\n所有数据处理完成！")
+        print(f"总处理时间: {total_time:.2f} 秒")
+        print(f"平均每表处理时间: {total_time/total_tables:.2f} 秒")
         
     except Exception as e:
         print(f"发生错误: {e}")
-    finally:
-        source_connection.close()
-        new_connection.close()
 
 if __name__ == "__main__":
     main()
