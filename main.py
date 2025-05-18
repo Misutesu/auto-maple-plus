@@ -124,6 +124,91 @@ def parse_datetime(msg_time_str):
     except ValueError:
         return None
 
+def is_valid_callsign(callsign):
+    """检查航班号是否有效"""
+    if not callsign or len(callsign.strip()) == 0:
+        return False
+    # 航班号应该只包含字母和数字
+    return bool(re.match(r'^[A-Z0-9]+$', callsign))
+
+def is_valid_coordinate(longitude, latitude):
+    """检查经纬度是否有效"""
+    try:
+        # 提取数值部分
+        lon = float(re.sub(r'[EW]', '', longitude))
+        lat = float(re.sub(r'[NS]', '', latitude))
+        
+        # 检查经纬度范围
+        if not (0 <= lon <= 180 and 0 <= lat <= 90):
+            return False
+            
+        # 检查格式（E/W 和 N/S）
+        if not (longitude.startswith('E') or longitude.startswith('W')):
+            return False
+        if not (latitude.startswith('N') or latitude.startswith('S')):
+            return False
+            
+        return True
+    except (ValueError, TypeError):
+        return False
+
+def is_valid_speed(speed):
+    """检查速度是否有效"""
+    try:
+        # 提取数值部分（去掉N/S/E/W等前缀）
+        speed_val = float(re.sub(r'[NSEW]', '', speed))
+        return -1000 <= speed_val <= 1000  # 设置一个合理的速度范围
+    except (ValueError, TypeError):
+        return False
+
+def is_valid_altitude(altitude):
+    """检查高度是否有效"""
+    try:
+        alt = float(altitude)
+        return 0 <= alt <= 50000  # 设置一个合理的高度范围（单位：英尺）
+    except (ValueError, TypeError):
+        return False
+
+def is_valid_track_data(track_data):
+    """检查航迹数据是否有效"""
+    if not track_data:
+        return False
+        
+    # 检查必要字段是否存在
+    required_fields = ['CALLSIGN', 'MSGTIME', 'LONGTD', 'LATTD', 'FL']
+    if not all(field in track_data for field in required_fields):
+        return False
+    
+    # 检查航班号
+    if not is_valid_callsign(track_data['CALLSIGN']):
+        return False
+    
+    # 检查经纬度
+    if not is_valid_coordinate(track_data['LONGTD'], track_data['LATTD']):
+        return False
+    
+    # 检查高度
+    if not is_valid_altitude(track_data['FL']):
+        return False
+    
+    # 检查速度（如果存在）
+    for speed_field in ['SPDX', 'SPDY']:
+        if speed_field in track_data and not is_valid_speed(track_data[speed_field]):
+            return False
+    
+    # 检查垂直速度（处理两种可能的参数名）
+    vertical_speed = track_data.get('SPDZGPS', track_data.get('SPDZ', None))
+    if vertical_speed is not None and not is_valid_speed(vertical_speed):
+        return False
+    
+    # 检查时间戳格式
+    try:
+        datetime.strptime(track_data['MSGTIME'], "%Y%m%d%H%M%S%f")
+    except ValueError:
+        return False
+    
+    return True
+
 def process_and_store_table_data(source_connection, new_connection, table_name):
     """处理单个表的数据并存储"""
     print(f"\n正在处理表: {table_name}")
@@ -132,8 +217,11 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
     
     try:
         # 分批次查询数据
-        batch_size = 10000
+        batch_size = 10000  # 每次处理10000条数据
         offset = 0
+        total_processed = 0
+        total_valid = 0
+        total_invalid = 0
         
         while True:
             # 查询一批数据
@@ -147,15 +235,24 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
             # 处理这批数据
             flight_data = defaultdict(list)
             filtered_count = 0
+            invalid_count = 0
             
             for row in rows:
+                total_processed += 1
                 track_data = parse_track_data(row['data'])
-                if (track_data and 
-                    'CALLSIGN' in track_data and 
-                    check_altitude(track_data) and 
+                
+                # 检查数据有效性
+                if not is_valid_track_data(track_data):
+                    invalid_count += 1
+                    total_invalid += 1
+                    continue
+                
+                # 检查筛选条件（高度和航班号前缀）
+                if (check_altitude(track_data) and 
                     check_callsign(track_data)):
                     flight_data[track_data['CALLSIGN']].append(track_data)
                     filtered_count += 1
+                    total_valid += 1
             
             # 存储这批数据
             for callsign, track_points in flight_data.items():
@@ -215,6 +312,9 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
                     except (ValueError, TypeError):
                         altitude = 0
 
+                    # 获取垂直速度（优先使用SPDZGPS，如果没有则使用SPDZ）
+                    vertical_speed = point.get('SPDZGPS', point.get('SPDZ', ''))
+
                     new_cursor.execute("""
                         INSERT INTO track_points (
                             flight_id, msg_time, track_id, longitude, latitude,
@@ -229,13 +329,22 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
                         altitude,
                         point.get('SPDX', ''),
                         point.get('SPDY', ''),
-                        point.get('SPDZ', ''),
+                        vertical_speed,
                         str(point)
                     ))
 
             new_connection.commit()
-            print(f"已处理 {offset + len(rows)} 条记录，其中符合条件的记录: {filtered_count} 条")
+            print(f"已处理 {offset + len(rows)} 条记录:")
+            print(f"  - 符合条件的记录: {filtered_count} 条")
+            print(f"  - 无效数据: {invalid_count} 条")
             offset += batch_size
+            
+        # 打印该表的总结信息
+        print(f"\n表 {table_name} 处理完成:")
+        print(f"  - 总处理记录: {total_processed}")
+        print(f"  - 有效记录: {total_valid}")
+        print(f"  - 无效记录: {total_invalid}")
+        print(f"  - 有效率: {(total_valid/total_processed*100):.2f}%")
             
     except mysql.connector.Error as err:
         print(f"处理表 {table_name} 时发生错误: {err}")
