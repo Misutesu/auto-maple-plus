@@ -25,13 +25,16 @@ def create_new_database():
 
     cursor = connection.cursor()
     try:
+        # 删除已存在的数据库
+        cursor.execute("DROP DATABASE IF EXISTS plane_data_new")
+        
         # 创建新数据库
-        cursor.execute("CREATE DATABASE IF NOT EXISTS plane_data_new")
+        cursor.execute("CREATE DATABASE plane_data_new")
         cursor.execute("USE plane_data_new")
 
         # 创建flights表
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS flights (
+            CREATE TABLE flights (
                 flight_id INT AUTO_INCREMENT PRIMARY KEY,
                 callsign VARCHAR(20) NOT NULL,
                 first_seen DATETIME,
@@ -45,7 +48,7 @@ def create_new_database():
 
         # 创建track_points表
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS track_points (
+            CREATE TABLE track_points (
                 point_id INT AUTO_INCREMENT PRIMARY KEY,
                 flight_id INT,
                 msg_time DATETIME,
@@ -62,6 +65,7 @@ def create_new_database():
         """)
 
         connection.commit()
+        print("数据库和表创建成功！")
         return True
     except mysql.connector.Error as err:
         print(f"Error creating database and tables: {err}")
