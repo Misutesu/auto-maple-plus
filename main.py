@@ -132,7 +132,7 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
     
     try:
         # 分批次查询数据
-        batch_size = 1000
+        batch_size = 10000
         offset = 0
         
         while True:
