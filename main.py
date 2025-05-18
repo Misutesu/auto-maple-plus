@@ -120,8 +120,20 @@ def get_all_tables(connection):
 def parse_datetime(msg_time_str):
     """解析消息时间字符串为datetime对象"""
     try:
-        return datetime.strptime(msg_time_str, "%Y%m%d%H%M%S%f")
-    except ValueError:
+        # 直接从MSGTIME字符串解析完整的时间
+        # 格式: YYYYMMDDHHmmssSSS
+        year = int(msg_time_str[:4])
+        month = int(msg_time_str[4:6])
+        day = int(msg_time_str[6:8])
+        hour = int(msg_time_str[8:10])
+        minute = int(msg_time_str[10:12])
+        second = int(msg_time_str[12:14])
+        # 毫秒部分如果存在的话
+        microsecond = int(msg_time_str[14:]) if len(msg_time_str) > 14 else 0
+        
+        return datetime(year, month, day, hour, minute, second, microsecond)
+    except (ValueError, TypeError, IndexError) as e:
+        print(f"Error parsing datetime from {msg_time_str}: {e}")
         return None
 
 def is_valid_callsign(callsign):
@@ -134,6 +146,10 @@ def is_valid_callsign(callsign):
 def is_valid_coordinate(longitude, latitude):
     """检查经纬度是否有效"""
     try:
+        # 检查是否为空或者只包含空格
+        if not longitude or not latitude or longitude.isspace() or latitude.isspace():
+            return False
+            
         # 提取数值部分
         lon = float(re.sub(r'[EW]', '', longitude))
         lat = float(re.sub(r'[NS]', '', latitude))
@@ -149,7 +165,7 @@ def is_valid_coordinate(longitude, latitude):
             return False
             
         return True
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, AttributeError):
         return False
 
 def is_valid_speed(speed):
@@ -222,6 +238,18 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
         total_processed = 0
         total_valid = 0
         total_invalid = 0
+        invalid_stats = {
+            'empty_coordinates': 0,
+            'invalid_coordinates': 0,
+            'invalid_altitude': 0,
+            'invalid_callsign': 0,
+            'missing_fields': 0,
+            'invalid_time': 0
+        }
+        
+        # 用于批量插入的缓存
+        flight_updates = {}  # 存储航班更新信息
+        track_points_batch = []  # 存储航迹点批量插入数据
         
         while True:
             # 查询一批数据
@@ -241,29 +269,66 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
                 total_processed += 1
                 track_data = parse_track_data(row['data'])
                 
-                # 检查数据有效性
-                if not is_valid_track_data(track_data):
+                # 详细的数据验证
+                if not track_data:
+                    invalid_stats['missing_fields'] += 1
                     invalid_count += 1
-                    total_invalid += 1
+                    continue
+                
+                # 检查必要字段是否存在
+                required_fields = ['CALLSIGN', 'MSGTIME', 'LONGTD', 'LATTD', 'FL']
+                if not all(field in track_data for field in required_fields):
+                    invalid_stats['missing_fields'] += 1
+                    invalid_count += 1
+                    continue
+                
+                # 检查航班号
+                if not is_valid_callsign(track_data['CALLSIGN']):
+                    invalid_stats['invalid_callsign'] += 1
+                    invalid_count += 1
+                    continue
+                
+                # 检查经纬度是否为空
+                if not track_data['LONGTD'] or not track_data['LATTD'] or \
+                   track_data['LONGTD'].isspace() or track_data['LATTD'].isspace():
+                    invalid_stats['empty_coordinates'] += 1
+                    invalid_count += 1
+                    continue
+                
+                # 检查经纬度格式和范围
+                if not is_valid_coordinate(track_data['LONGTD'], track_data['LATTD']):
+                    invalid_stats['invalid_coordinates'] += 1
+                    invalid_count += 1
+                    continue
+                
+                # 检查高度
+                if not is_valid_altitude(track_data['FL']):
+                    invalid_stats['invalid_altitude'] += 1
+                    invalid_count += 1
+                    continue
+                
+                # 检查时间格式
+                msg_time = parse_datetime(track_data['MSGTIME'])
+                if not msg_time:
+                    invalid_stats['invalid_time'] += 1
+                    invalid_count += 1
                     continue
                 
                 # 检查筛选条件（高度和航班号前缀）
                 if (check_altitude(track_data) and 
                     check_callsign(track_data)):
-                    flight_data[track_data['CALLSIGN']].append(track_data)
+                    flight_data[track_data['CALLSIGN']].append((track_data, msg_time))
                     filtered_count += 1
                     total_valid += 1
             
-            # 存储这批数据
+            # 处理航班数据
             for callsign, track_points in flight_data.items():
                 if not track_points:
                     continue
 
                 # 获取时间范围和高度范围
-                msg_times = [parse_datetime(point.get('MSGTIME', '')) for point in track_points if point.get('MSGTIME')]
-                msg_times = [t for t in msg_times if t is not None]
-                
-                altitudes = [float(point.get('FL', '0')) for point in track_points if point.get('FL')]
+                msg_times = [point[1] for point in track_points]
+                altitudes = [float(point[0].get('FL', '0')) for point in track_points]
                 
                 if not msg_times or not altitudes:
                     continue
@@ -274,66 +339,107 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
                 max_altitude = max(altitudes)
                 min_altitude = min(altitudes)
 
-                # 插入或更新航班记录
-                new_cursor.execute("""
-                    INSERT INTO flights (
-                        callsign, first_seen, last_seen, total_points,
-                        max_altitude, min_altitude
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    ON DUPLICATE KEY UPDATE 
-                        first_seen = LEAST(first_seen, %s),
-                        last_seen = GREATEST(last_seen, %s),
-                        total_points = total_points + %s,
-                        max_altitude = GREATEST(max_altitude, %s),
-                        min_altitude = LEAST(min_altitude, %s)
-                """, (
-                    callsign, first_seen, last_seen, total_points,
-                    max_altitude, min_altitude,
-                    first_seen, last_seen, total_points,
-                    max_altitude, min_altitude
-                ))
-                
-                # 获取flight_id
-                if new_cursor.lastrowid:
-                    flight_id = new_cursor.lastrowid
+                # 更新航班信息缓存
+                if callsign not in flight_updates:
+                    flight_updates[callsign] = {
+                        'first_seen': first_seen,
+                        'last_seen': last_seen,
+                        'total_points': total_points,
+                        'max_altitude': max_altitude,
+                        'min_altitude': min_altitude,
+                        'points': []
+                    }
                 else:
-                    new_cursor.execute("SELECT flight_id FROM flights WHERE callsign = %s", (callsign,))
-                    flight_id = new_cursor.fetchone()[0]
+                    existing = flight_updates[callsign]
+                    existing['first_seen'] = min(existing['first_seen'], first_seen)
+                    existing['last_seen'] = max(existing['last_seen'], last_seen)
+                    existing['total_points'] += total_points
+                    existing['max_altitude'] = max(existing['max_altitude'], max_altitude)
+                    existing['min_altitude'] = min(existing['min_altitude'], min_altitude)
+                
+                # 添加航迹点到缓存
+                flight_updates[callsign]['points'].extend(track_points)
 
-                # 插入航迹点数据
-                for point in track_points:
-                    msg_time = parse_datetime(point.get('MSGTIME', ''))
-                    if not msg_time:
-                        continue
+            # 每处理50000条记录或最后一批数据时，执行批量插入
+            if total_processed % 50000 == 0 or not rows:
+                # 批量更新航班信息
+                if flight_updates:
+                    # 首先插入或更新航班信息
+                    flight_values = []
+                    for callsign, data in flight_updates.items():
+                        flight_values.append((
+                            callsign, 
+                            data['first_seen'],
+                            data['last_seen'],
+                            data['total_points'],
+                            data['max_altitude'],
+                            data['min_altitude']
+                        ))
 
-                    try:
-                        altitude = float(point.get('FL', '0'))
-                    except (ValueError, TypeError):
-                        altitude = 0
+                    # 批量插入或更新航班信息
+                    new_cursor.executemany("""
+                        INSERT INTO flights (
+                            callsign, first_seen, last_seen, total_points,
+                            max_altitude, min_altitude
+                        ) VALUES (%s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE 
+                            first_seen = LEAST(first_seen, VALUES(first_seen)),
+                            last_seen = GREATEST(last_seen, VALUES(last_seen)),
+                            total_points = total_points + VALUES(total_points),
+                            max_altitude = GREATEST(max_altitude, VALUES(max_altitude)),
+                            min_altitude = LEAST(min_altitude, VALUES(min_altitude))
+                    """, flight_values)
 
-                    # 获取垂直速度（优先使用SPDZGPS，如果没有则使用SPDZ）
-                    vertical_speed = point.get('SPDZGPS', point.get('SPDZ', ''))
+                    # 获取所有航班的ID
+                    callsign_list = list(flight_updates.keys())
+                    format_strings = ','.join(['%s'] * len(callsign_list))
+                    new_cursor.execute(
+                        f"SELECT flight_id, callsign FROM flights WHERE callsign IN ({format_strings})",
+                        callsign_list
+                    )
+                    flight_ids = {row['callsign']: row['flight_id'] for row in new_cursor.fetchall()}
 
-                    new_cursor.execute("""
-                        INSERT INTO track_points (
-                            flight_id, msg_time, track_id, longitude, latitude,
-                            altitude, speed_x, speed_y, speed_z, raw_data
-                        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    """, (
-                        flight_id,
-                        msg_time,
-                        point.get('TRACKID', ''),
-                        point.get('LONGTD', ''),
-                        point.get('LATTD', ''),
-                        altitude,
-                        point.get('SPDX', ''),
-                        point.get('SPDY', ''),
-                        vertical_speed,
-                        str(point)
-                    ))
+                    # 准备航迹点数据进行批量插入
+                    track_points_values = []
+                    for callsign, data in flight_updates.items():
+                        flight_id = flight_ids[callsign]
+                        for point, msg_time in data['points']:
+                            try:
+                                altitude = float(point.get('FL', '0'))
+                            except (ValueError, TypeError):
+                                altitude = 0
 
-            new_connection.commit()
+                            vertical_speed = point.get('SPDZGPS', point.get('SPDZ', ''))
+                            
+                            track_points_values.append((
+                                flight_id,
+                                msg_time,
+                                point.get('TRACKID', ''),
+                                point.get('LONGTD', ''),
+                                point.get('LATTD', ''),
+                                altitude,
+                                point.get('SPDX', ''),
+                                point.get('SPDY', ''),
+                                vertical_speed,
+                                str(point)
+                            ))
+
+                    # 批量插入航迹点数据
+                    if track_points_values:
+                        new_cursor.executemany("""
+                            INSERT INTO track_points (
+                                flight_id, msg_time, track_id, longitude, latitude,
+                                altitude, speed_x, speed_y, speed_z, raw_data
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        """, track_points_values)
+
+                    # 提交事务
+                    new_connection.commit()
+
+                    # 清空缓存
+                    flight_updates.clear()
+                    track_points_values.clear()
+
             print(f"已处理 {offset + len(rows)} 条记录:")
             print(f"  - 符合条件的记录: {filtered_count} 条")
             print(f"  - 无效数据: {invalid_count} 条")
@@ -345,6 +451,13 @@ def process_and_store_table_data(source_connection, new_connection, table_name):
         print(f"  - 有效记录: {total_valid}")
         print(f"  - 无效记录: {total_invalid}")
         print(f"  - 有效率: {(total_valid/total_processed*100):.2f}%")
+        print("\n无效数据统计:")
+        print(f"  - 空经纬度: {invalid_stats['empty_coordinates']}")
+        print(f"  - 无效经纬度: {invalid_stats['invalid_coordinates']}")
+        print(f"  - 无效高度: {invalid_stats['invalid_altitude']}")
+        print(f"  - 无效航班号: {invalid_stats['invalid_callsign']}")
+        print(f"  - 缺失字段: {invalid_stats['missing_fields']}")
+        print(f"  - 无效时间: {invalid_stats['invalid_time']}")
             
     except mysql.connector.Error as err:
         print(f"处理表 {table_name} 时发生错误: {err}")
