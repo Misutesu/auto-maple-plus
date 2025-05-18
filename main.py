@@ -16,16 +16,8 @@ def connect_to_database(database_name=None):
             password="zhang3660628",
             database=database_name,
             buffered=True,
-            pool_size=5,
-            autocommit=False,
-            raise_on_warnings=False,
-            get_warnings=False
+            autocommit=False
         )
-        # 设置更大的缓冲区
-        cursor = connection.cursor()
-        cursor.execute("SET GLOBAL innodb_buffer_pool_size=4294967296")  # 4GB
-        cursor.execute("SET GLOBAL max_allowed_packet=67108864")  # 64MB
-        cursor.close()
         return connection
     except mysql.connector.Error as err:
         print(f"Error connecting to database: {err}")
