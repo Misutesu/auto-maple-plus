@@ -155,10 +155,6 @@ class Notifier:
                                 self.lastAlertTimeDict,
                                 self.watchlist[item]["msg"],
                             )
-                            if item == "chatbox_msg" and alertSent:
-                                self.alertFile(
-                                    target=config.webhook, image="assets\chat.png"
-                                )
                             if item == "character_dead" and reviveWhenDead:
                                 # automation.autoRevive()
                                 config.listener.toggle_enabled()

@@ -158,44 +158,6 @@ class Watcher:
                             detectionTable[scanEntry] = ""
                             setattr(config, flagname, False)
 
-                # scan for chat
-                try:
-                    game_window = config.capture.window
-                    chatbox_window = {
-                        "top": game_window["top"] + game_window["height"] - 125,
-                        "left": game_window["left"] + 15,
-                        "width": 390,
-                        "height": 100,
-                    }
-
-                    img = cv2.imread("assets/chat.png")
-
-                    # remove specifically achievements mega
-                    noAchiv = cv2.bitwise_and(
-                        img,
-                        img,
-                        mask=cv2.bitwise_not(
-                            cv2.inRange(img, (255, 255, 220), (255, 255, 230))
-                        ),
-                    )
-
-                    # set white range and threshold
-                    lowcolor = (
-                        210,
-                        210,
-                        210,
-                    )  # gm chat color is dimmest at 210 210 210
-                    highcolor = (255, 255, 255)  # pure white
-                    thresh = cv2.inRange(noAchiv, lowcolor, highcolor)
-                    # count pixels ch. is 19 pixels
-                    count = np.count_nonzero(thresh)
-                    if count >= 80:
-                        config.chatbox_msg = True
-                    else:
-                        config.chatbox_msg = False
-                except:
-                    print("scanforchat fail")
-
                 # scan for stationary
                 if charLocation_Last == None:
                     charLocation_Last = config.player_pos
