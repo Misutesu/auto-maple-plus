@@ -2,7 +2,7 @@
 
 import time
 from src.modules.bot import Bot
-from src.modules.capture import Capture
+from src.modules.capture_ws import Capture
 from src.modules.notifier import Notifier
 from src.modules.watcher import Watcher
 from src.modules.listener import Listener

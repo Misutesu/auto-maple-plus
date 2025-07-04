@@ -11,41 +11,37 @@ import keyboard as kb
 from src.routine.components import Point
 from src.common import config
 from resources import watcher_scan_table
-import mss
 from src.gui.automation.main import AutomationParams
 import src.modules.automation as automation
 
 # A rune's symbol on the minimap
-RUNE_RANGES = (
-    ((141, 148, 245), (146, 158, 255)),
-)
-rune_filtered = utils.filter_color(cv2.imread('assets/rune_template.png'), RUNE_RANGES)
-RUNE_TEMPLATE = cv2.cvtColor(rune_filtered, cv2.COLOR_BGR2GRAY)
+RUNE_TEMPLATE = cv2.imread("assets/rune_template.png", 0)
 
 # Other players' symbols on the minimap
-OTHER_RANGES = (
-    ((0, 245, 215), (10, 255, 255)),
+OTHER_RANGES = (((0, 245, 215), (10, 255, 255)),)
+other_filtered = utils.filter_color(
+    cv2.imread("assets/other_template.png"), OTHER_RANGES
 )
-other_filtered = utils.filter_color(cv2.imread('assets/other_template.png'), OTHER_RANGES)
 OTHER_TEMPLATE = cv2.cvtColor(other_filtered, cv2.COLOR_BGR2GRAY)
 
 # The Elite Boss's warning sign
-ELITE_TEMPLATE = cv2.imread('assets/elite_template.jpg', 0)
+ELITE_TEMPLATE = cv2.imread("assets/elite_template.jpg", 0)
 
 # Rune CD Templates
-RUNE_CD1_TEMPLATE = cv2.imread('assets/runeCD.png', 0)
-RUNE_CD2_TEMPLATE = cv2.imread('assets/runeCD2.png', 0)
+RUNE_CD1_TEMPLATE = cv2.imread("assets/runeCD.png", 0)
+RUNE_CD2_TEMPLATE = cv2.imread("assets/runeCD2.png", 0)
 
 # EXP Text as Chat Anchor
-LOGIN_SCREEN = cv2.imread('assets/Login.png',0)
-SECONDPW_SCREEN = cv2.imread('assets/2ndpwKB.png',0)
+LOGIN_SCREEN = cv2.imread("assets/Login.png", 0)
+SECONDPW_SCREEN = cv2.imread("assets/2ndpwKB.png", 0)
+
 
 def get_alert_path(name):
-    return os.path.join(Watcher.ALERTS_DIR, f'{name}.mp3')
+    return os.path.join(Watcher.ALERTS_DIR, f"{name}.mp3")
 
 
 class Watcher:
-    ALERTS_DIR = os.path.join('assets', 'alerts')
+    ALERTS_DIR = os.path.join("assets", "alerts")
 
     def __init__(self):
         self.ready = False
@@ -53,13 +49,13 @@ class Watcher:
         self.thread.daemon = True
 
         self.room_change_threshold = 0.9
-        self.rune_alert_delay = 270         # 4.5 minutes
+        self.rune_alert_delay = 270  # 4.5 minutes
 
         self.detectionTable = {}
 
     def start(self):
         """Starts this Watcher's thread."""
-        print('\n[~] Started watcher')
+        print("\n[~] Started watcher")
         self.thread.start()
 
     def _main(self):
@@ -73,11 +69,11 @@ class Watcher:
         charLocation_Last = None
 
         while True:
-            frame = config.capture.frame #entire screen
+            frame = config.capture.frame  # entire screen
             height, width, _ = frame.shape
-            minimap = config.capture.minimap['minimap'] #minimap only
+            minimap = config.capture.minimap["minimap"]  # minimap only
 
-            #scans in this section only activate if bot is enabled
+            # scans in this section only activate if bot is enabled
             if config.enabled:
                 # Check for rune CD
                 runeCD1 = utils.multi_match(frame, RUNE_CD1_TEMPLATE, threshold=0.85)
@@ -90,18 +86,25 @@ class Watcher:
                 # Check for rune
                 now = time.time()
                 if not config.bot.rune_active:
-                    filtered = utils.filter_color(minimap, RUNE_RANGES)
-                    matches = utils.multi_match(filtered, RUNE_TEMPLATE, threshold=0.9)
+                    matches = utils.multi_match(minimap, RUNE_TEMPLATE, threshold=0.9)
                     rune_start_time = now
                     if matches and config.routine.sequence:
                         abs_rune_pos = (matches[0][0], matches[0][1])
-                        config.bot.rune_pos = utils.convert_to_relative(abs_rune_pos, minimap)
-                        distances = list(map(distance_to_rune, config.routine.sequence))
-                        index = np.argmin(distances)
-                        config.bot.rune_closest_pos = config.routine[index].location
+                        config.bot.rune_pos = utils.convert_to_relative(
+                            abs_rune_pos, minimap
+                        )
+                        # distances = list(map(distance_to_rune, config.routine.sequence))
+                        # index = np.argmin(distances)                 
+                        # config.bot.rune_closest_pos = config.routine[index].location
+                        
+                        next_index = (config.routine.index + 1) % len(config.routine.sequence)
+                        config.bot.rune_closest_pos = config.routine[next_index].location
+                        
                         if config.rune_cd == False:
                             config.bot.rune_active = True
-                elif now - rune_start_time > self.rune_alert_delay:     # Alert if rune hasn't been solved
+                elif (
+                    now - rune_start_time > self.rune_alert_delay
+                ):  # Alert if rune hasn't been solved
                     config.bot.rune_active = False
 
                 # Update key stats into monitoring console
@@ -123,51 +126,68 @@ class Watcher:
                 for scanEntry in std:
                     params = std[scanEntry]
                     flagname = params.get("flag")
-                    target = cv2.imread("assets/"+params.get("ImgName"),0)
-                    matchCount = utils.multi_match(frame=frame, template=target, threshold=0.8)                   
+                    target = cv2.imread("assets/" + params.get("ImgName"), 0)
+                    matchCount = utils.multi_match(
+                        frame=frame, template=target, threshold=0.8
+                    )
                     if params.get("Invert") == "False":
                         if matchCount != []:
                             if detectionTable[scanEntry] == "":
                                 detectionTable[scanEntry] = datetime.now()
                             else:
                                 firstDetection = detectionTable[scanEntry]
-                                if (datetime.now() - firstDetection).total_seconds() > int(params.get("Threshold")):
-                                    setattr(config,flagname,True)
+                                if (
+                                    datetime.now() - firstDetection
+                                ).total_seconds() > int(params.get("Threshold")):
+                                    setattr(config, flagname, True)
 
                         else:
                             detectionTable[scanEntry] = ""
-                            setattr(config,flagname,False)
+                            setattr(config, flagname, False)
                     if params.get("Invert") == "True":
                         if matchCount == []:
                             if detectionTable[scanEntry] == "":
                                 detectionTable[scanEntry] = datetime.now()
                             else:
                                 firstDetection = detectionTable[scanEntry]
-                                if (datetime.now() - firstDetection).total_seconds() > int(params.get("Threshold")):
-                                    setattr(config,flagname,True)
+                                if (
+                                    datetime.now() - firstDetection
+                                ).total_seconds() > int(params.get("Threshold")):
+                                    setattr(config, flagname, True)
                         else:
                             detectionTable[scanEntry] = ""
-                            setattr(config,flagname,False)
+                            setattr(config, flagname, False)
 
-                #scan for chat
+                # scan for chat
                 try:
                     game_window = config.capture.window
-                    chatbox_window = {"top": game_window["top"] + game_window["height"] - 125, "left": game_window["left"] + 15, "width": 390, "height":100}
-                    with mss.mss() as sct:
-                        # The screen part to capture
-                        output = "assets/chat.png"
-                        sct_img = sct.grab(chatbox_window)
-                        mss.tools.to_png(sct_img.rgb, sct_img.size, output=output)
+                    chatbox_window = {
+                        "top": game_window["top"] + game_window["height"] - 125,
+                        "left": game_window["left"] + 15,
+                        "width": 390,
+                        "height": 100,
+                    }
+
                     img = cv2.imread("assets/chat.png")
 
-                    #remove specifically achievements mega
-                    noAchiv = cv2.bitwise_and(img,img,mask=cv2.bitwise_not(cv2.inRange(img, (255,255,220), (255,255,230))))
+                    # remove specifically achievements mega
+                    noAchiv = cv2.bitwise_and(
+                        img,
+                        img,
+                        mask=cv2.bitwise_not(
+                            cv2.inRange(img, (255, 255, 220), (255, 255, 230))
+                        ),
+                    )
 
                     # set white range and threshold
-                    lowcolor =(210,210,210) #gm chat color is dimmest at 210 210 210
-                    highcolor = (255,255,255) #pure white
+                    lowcolor = (
+                        210,
+                        210,
+                        210,
+                    )  # gm chat color is dimmest at 210 210 210
+                    highcolor = (255, 255, 255)  # pure white
                     thresh = cv2.inRange(noAchiv, lowcolor, highcolor)
-                    #count pixels ch. is 19 pixels
+                    # count pixels ch. is 19 pixels
                     count = np.count_nonzero(thresh)
                     if count >= 80:
                         config.chatbox_msg = True
@@ -176,40 +196,45 @@ class Watcher:
                 except:
                     print("scanforchat fail")
 
-                #scan for stationary
+                # scan for stationary
                 if charLocation_Last == None:
                     charLocation_Last = config.player_pos
                     charLocation_Time = datetime.now()
                 if charLocation_Last != config.player_pos:
                     charLocation_Last = config.player_pos
                     charLocation_Time = datetime.now()
-                    setattr(config,"player_stuck",False)
-                if config.player_pos == charLocation_Last and (datetime.now()-charLocation_Time).total_seconds() > 15:
-                    setattr(config,"player_stuck",True)
-            
+                    setattr(config, "player_stuck", False)
+                if (
+                    config.player_pos == charLocation_Last
+                    and (datetime.now() - charLocation_Time).total_seconds() > 15
+                ):
+                    setattr(config, "player_stuck", True)
 
             try:
                 config.gui.runtime_console.runtimeFlags.update_All_Flags()
             except:
                 pass
 
-            #scans below here activate regardless of bot enabled status
-            #scan for login screens
+            # scans below here activate regardless of bot enabled status
+            # scan for login screens
             loginscreen = utils.multi_match(frame, LOGIN_SCREEN, 0.7)
             if loginscreen != []:
-                autoLoginToggle = AutomationParams('Automation Settings').get("auto_login2FA_toggle")
+                autoLoginToggle = AutomationParams("Automation Settings").get(
+                    "auto_login2FA_toggle"
+                )
                 if autoLoginToggle:
                     automation.autoLogin()
-            
-            #scan for secondPW screens
+
+            # scan for secondPW screens
             secondPWscreen = utils.multi_match(frame, SECONDPW_SCREEN, 0.8)
             if secondPWscreen != []:
-                autosecondaryToggle = AutomationParams('Automation Settings').get("auto_2ndPW_toggle")
+                autosecondaryToggle = AutomationParams("Automation Settings").get(
+                    "auto_2ndPW_toggle"
+                )
                 if autosecondaryToggle:
                     automation.auto2ndPW()
 
             time.sleep(0.1)
-
 
     def _alert(self, name, volume=0.75):
         """
@@ -222,7 +247,7 @@ class Watcher:
         self.mixer.load(get_alert_path(name))
         self.mixer.set_volume(volume)
         self.mixer.play(-1)
-        while not kb.is_pressed(config.listener.config['Start/stop']):
+        while not kb.is_pressed(config.listener.config["Start/stop"]):
             time.sleep(0.1)
         self.mixer.stop()
         time.sleep(2)
@@ -248,4 +273,4 @@ def distance_to_rune(point):
 
     if isinstance(point, Point):
         return utils.distance(config.bot.rune_pos, point.location)
-    return float('inf')
+    return float("inf")

@@ -1,10 +1,9 @@
 """A collection of variables shared across multiple modules."""
 
-
 #########################
 #       Constants       #
 #########################
-RESOURCES_DIR = 'resources'
+RESOURCES_DIR = "resources"
 
 
 #################################
@@ -46,7 +45,8 @@ gui = None
 
 # Shares the webhook to all modules
 webhook = None
-pushPlus =None
+pushPlus = None
+qmsg = None
 
 
 ##############################
@@ -91,8 +91,8 @@ player_stuck = False
 # Polo portal
 polo_portal = False
 
-#Especia portal
+# Especia portal
 especia_portal = False
 
-#Player in town
+# Player in town
 in_town = False

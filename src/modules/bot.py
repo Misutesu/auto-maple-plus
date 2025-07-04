@@ -2,51 +2,49 @@
 
 import threading
 import time
-import git
+
 import cv2
-import inspect
-import importlib
-import traceback
-from os.path import splitext, basename
-from src.common.vkeys import press, key_down, key_up
-from src.common import config, utils
-from src.routine import components
-from src.routine.routine import Routine
+import git
+
 from src.command_book.command_book import CommandBook
-from src.routine.components import Point
+from src.common import config, utils
 from src.common.interfaces import Configurable
+from src.common.vkeys import press
+from src.routine.components import Point
+from src.routine.routine import Routine
 from src.runesolvercore.runesolver import enterCashshop
 from src.runesolvercore.runesolver import solve_rune_raw
 
 # The rune's buff icon
-RUNE_BUFF_TEMPLATE = cv2.imread('assets/rune_buff_template.jpg', 0)
+RUNE_BUFF_TEMPLATE = cv2.imread("assets/rune_buff_template.jpg", 0)
 
 
 class Bot(Configurable):
     """A class that interprets and executes user-defined routines."""
 
     DEFAULT_CONFIG = {
-        'NPC/Gather': 'y',
-        'Feed pet': '9',
-        'Cash Shop': '`',
-        '2x EXP Buff': '7',
-        'Mushroom Buff': '8',
-        'Additional EXP Buff': '9',
-        'Gold Pot': '10',
-        'Wealth Acquisition': '-'
+        "NPC/Gather": "y",
+        "Feed pet": "9",
+        "Cash Shop": "`",
+        "2x EXP Buff": "7",
+        "Mushroom Buff": "8",
+        "Additional EXP Buff": "9",
+        "Gold Pot": "10",
+        "Wealth Acquisition": "-",
     }
 
     def __init__(self):
         """Loads a user-defined routine on start up and initializes this Bot's main thread."""
 
-        super().__init__('keybindings')
+        super().__init__("keybindings")
         config.bot = self
 
         self.rune_active = False
         self.rune_pos = (0, 0)
         self.rune_closest_pos = (0, 0)  # Location of the Point closest to rune
+        self.rune_next_pos = (0, 0)
         self.submodules = []
-        self.command_book = None  # CommandBook instance
+        self.command_book = None  # CommandBook instanceq
         # self.module_name = None
         # self.buff = components.Buff()
 
@@ -70,7 +68,7 @@ class Bot(Configurable):
         """
 
         # self.update_submodules()
-        print('\n[~] Started main bot loop')
+        print("\n[~] Started main bot loop")
         self.thread.start()
 
     def _main(self):
@@ -78,6 +76,7 @@ class Bot(Configurable):
         The main body of Bot that executes the user's routine.
         :return:    None
         """
+
         self.ready = True
         config.listener.enabled = True
         last_fed = time.time()
@@ -105,38 +104,47 @@ class Bot(Configurable):
                 # feed pets
                 now = time.time()
                 if auto_feed and now - last_fed > 1200 / num_pets:
-                    press(self.config['Feed pet'], 1)
+                    press(self.config["Feed pet"], 1)
                     last_fed = now
 
                 # buff exp buff
                 if auto_buff_exp:
                     if last_30m_expbuffed == None:
-                        press(self.config['2x EXP Buff'], 1)
+                        press(self.config["2x EXP Buff"], 1)
                         time.sleep(0.4)
-                        press(self.config['Mushroom Buff'], 1)
+                        press(self.config["Mushroom Buff"], 1)
                         time.sleep(0.4)
-                        press(self.config['Additional EXP Buff'], 1)
+                        press(self.config["Additional EXP Buff"], 1)
                         time.sleep(0.4)
-                        press(self.config['Gold Pot'], 1)
+                        press(self.config["Gold Pot"], 1)
                         time.sleep(0.4)
-                        press(self.config['Wealth Acquisition'], 1)
+                        press(self.config["Wealth Acquisition"], 1)
                         time.sleep(0.4)
                         last_30m_expbuffed = now
                     config.gui.view.monitoringconsole.set_nextexpbuffstat(
-                        str(round((expbuff_use_interval * 900 - (now - last_30m_expbuffed)))) + "s")
+                        str(
+                            round(
+                                (
+                                    expbuff_use_interval * 900
+                                    - (now - last_30m_expbuffed)
+                                )
+                            )
+                        )
+                        + "s"
+                    )
                     if now - last_30m_expbuffed > expbuff_use_interval * 900 + 10:
-                        press(self.config['2x EXP Buff'], 1)
+                        press(self.config["2x EXP Buff"], 1)
                         time.sleep(0.2)
                     if now - last_30m_expbuffed > 1800 + 10:
-                        press(self.config['Mushroom Buff'], 1)
+                        press(self.config["Mushroom Buff"], 1)
                         time.sleep(0.2)
-                        press(self.config['Additional EXP Buff'], 1)
+                        press(self.config["Additional EXP Buff"], 1)
                         time.sleep(0.2)
-                        press(self.config['Gold Pot'], 1)
+                        press(self.config["Gold Pot"], 1)
                         time.sleep(0.2)
                         last_30m_expbuffed = now
                     if now - last_30m_expbuffed > 7200 + 10:
-                        press(self.config['Wealth Acquisition'], 1)
+                        press(self.config["Wealth Acquisition"], 1)
                         time.sleep(0.2)
                         last_30m_expbuffed = now
                 elif auto_buff_exp == False:
@@ -144,7 +152,9 @@ class Bot(Configurable):
 
                 # Enter cash shop to reset DC timer
                 config.gui.view.monitoringconsole.set_nextcsresetstat(
-                    str(round((cs_reset_interval * 3600 - (now - last_enteredCS)))) + "s")
+                    str(round((cs_reset_interval * 3600 - (now - last_enteredCS))))
+                    + "s"
+                )
                 if cs_reset_toggle and now - last_enteredCS > cs_reset_interval * 3600:
                     print("Entering cash shop for reset")
                     enterCashshop(self)
@@ -159,8 +169,11 @@ class Bot(Configurable):
                 # Execute next Point in the routine
                 element = config.routine[config.routine.index]
                 if config.rune_cd == False:
-                    if self.rune_active and isinstance(element, Point) \
-                            and element.location == self.rune_closest_pos:
+                    if (
+                        self.rune_active
+                        and isinstance(element, Point)
+                        and element.location == self.rune_closest_pos
+                    ):
                         self._solve_rune()
                 element.execute()
                 config.routine.step()
@@ -172,17 +185,18 @@ class Bot(Configurable):
         """
         Moves to the position of the rune and solves the arrow-key puzzle.
         :param model:   The TensorFlow model to classify with.
-        :param sct:     The mss instance object with which to take screenshots.
         :return:        None
         """
 
-        move = self.command_book['move']
-        move(*self.rune_pos).execute()
-        adjust = self.command_book['adjust']
-        adjust(*self.rune_pos).execute()
+        def move_to_rune(self):
+            move = self.command_book["move"]
+            move(*self.rune_pos).execute()
+            adjust = self.command_book["adjust"]
+            adjust(*self.rune_pos).execute()
+
         time.sleep(0.5)
-        print('\nSolving rune:')
-        solve_rune_raw(self)
+        print("\nSolving rune:")
+        solve_rune_raw(self, self, move_to_rune=move_to_rune)
         self.rune_active = False
 
     def load_commands(self, file):
@@ -270,16 +284,16 @@ class Bot(Configurable):
         """
 
         utils.print_separator()
-        print('[~] Retrieving latest submodules:')
+        print("[~] Retrieving latest submodules:")
         self.submodules = []
         repo = git.Repo.init()
-        with open('.gitmodules', 'r') as file:
+        with open(".gitmodules", "r") as file:
             lines = file.readlines()
             i = 0
             while i < len(lines):
-                if lines[i].startswith('[') and i < len(lines) - 2:
-                    path = lines[i + 1].split('=')[1].strip()
-                    url = lines[i + 2].split('=')[1].strip()
+                if lines[i].startswith("[") and i < len(lines) - 2:
+                    path = lines[i + 1].split("=")[1].strip()
+                    url = lines[i + 2].split("=")[1].strip()
                     self.submodules.append(path)
                     try:
                         repo.git.clone(url, path)  # First time loading submodule
@@ -288,17 +302,19 @@ class Bot(Configurable):
                         sub_repo = git.Repo(path)
                         if not force:
                             sub_repo.git.stash()  # Save modified content
-                        sub_repo.git.fetch('origin', 'main')
-                        sub_repo.git.reset('--hard', 'FETCH_HEAD')
+                        sub_repo.git.fetch("origin", "main")
+                        sub_repo.git.reset("--hard", "FETCH_HEAD")
                         if not force:
                             try:  # Restore modified content
-                                sub_repo.git.checkout('stash', '--', '.')
-                                print(f" -  Updated submodule '{path}', restored local changes")
+                                sub_repo.git.checkout("stash", "--", ".")
+                                print(
+                                    f" -  Updated submodule '{path}', restored local changes"
+                                )
                             except git.exc.GitCommandError:
                                 print(f" -  Updated submodule '{path}'")
                         else:
                             print(f" -  Rebuilt submodule '{path}'")
-                        sub_repo.git.stash('clear')
+                        sub_repo.git.stash("clear")
                     i += 3
                 else:
                     i += 1

@@ -1,5 +1,4 @@
 import pyautogui
-import mss
 import cv2
 import src.common.config as config, src.common.utils as utils
 import src.gui.automation as automation

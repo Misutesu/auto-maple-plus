@@ -1,5 +1,11 @@
 __pycache__/
-assets/models/
 .idea/
 .settings/
+.venv/
+build/
+dist/
 *.iml
+
+assets/models/
+assets/rune_log/
+rune_capture.png

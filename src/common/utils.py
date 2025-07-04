@@ -19,6 +19,7 @@ def run_if_enabled(function):
     def helper(*args, **kwargs):
         if config.enabled:
             return function(*args, **kwargs)
+
     return helper
 
 
@@ -35,7 +36,9 @@ def run_if_disabled(message=''):
                 return function(*args, **kwargs)
             elif message:
                 print(message)
+
         return helper
+
     return decorator
 
 
@@ -65,7 +68,7 @@ def separate_args(arguments):
         index = a.find('=')
         if index > -1:
             key = a[:index].strip()
-            value = a[index+1:].strip()
+            value = a[index + 1:].strip()
             kwargs[key] = value
         else:
             args.append(a)
@@ -86,6 +89,186 @@ def single_match(frame, template):
     w, h = template.shape[::-1]
     bottom_right = (top_left[0] + w, top_left[1] + h)
     return top_left, bottom_right
+
+def single_match_new(frame, template, threshold=0.8):
+    """
+    从游戏画面图片中匹配某些元素，支持透明度处理
+
+    :param frame: 游戏画面图片 (BGR格式)
+    :param template: 模板图片，支持透明度 (BGRA格式)
+    :param threshold: 匹配阈值，范围0-1，默认0.8
+    :return: (top_left, bottom_right) 匹配元素的左上角和右下角坐标，如果未找到则返回None
+    """
+
+    # 快速参数检查
+    if frame is None or template is None:
+        return None
+
+    # 快速获取模板图片的通道数 - 避免多次shape访问
+    template_shape = template.shape
+    if len(template_shape) == 2:
+        # 灰度图，转换为BGR
+        template = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
+        return _match_without_alpha_optimized(frame, template, threshold)
+    elif len(template_shape) == 3:
+        template_channels = template_shape[2]
+        if template_channels == 3:
+            # BGR格式
+            return _match_without_alpha_optimized(frame, template, threshold)
+        elif template_channels == 4:
+            # BGRA格式
+            return _match_with_alpha_optimized(frame, template, threshold)
+        else:
+            raise ValueError(f"不支持的模板图片格式，通道数: {template_channels}")
+    else:
+        raise ValueError(f"不支持的模板图片格式，维度数: {len(template_shape)}")
+
+def _match_with_alpha_optimized(frame, template, threshold):
+    """
+    优化版本：处理带有透明度的模板匹配
+    """
+    # 分离BGRA通道 - 避免不必要的浮点运算
+    bgr = template[:, :, :3].astype(np.uint8)
+    alpha = template[:, :, 3].astype(np.uint8)
+    
+    # 创建掩码 - 使用整数比较避免浮点运算，转换为uint8类型
+    mask = (alpha > 25).astype(np.uint8)  # 相当于 0.1 * 255
+
+    # 确保frame也是uint8类型
+    if frame.dtype != np.uint8:
+        frame = frame.astype(np.uint8)
+
+    # 如果frame是4通道（BGRA），转换为3通道（BGR）
+    if len(frame.shape) == 3 and frame.shape[2] == 4:
+        frame = frame[:, :, :3]
+
+    # 使用更快的匹配算法 TM_CCOEFF_NORMED 替代 TM_CCORR_NORMED
+    result = cv2.matchTemplate(frame, bgr, cv2.TM_CCOEFF_NORMED, mask=mask)
+
+    # 找到最佳匹配位置
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+    # 检查匹配度是否达到阈值
+    if max_val >= threshold:
+        top_left = max_loc
+        h, w = template.shape[:2]
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        return top_left, bottom_right
+    else:
+        return None
+
+
+def _match_without_alpha_optimized(frame, template, threshold):
+    """
+    优化版本：处理不带透明度的模板匹配
+    """
+    # 确保数据类型正确
+    if frame.dtype != np.uint8:
+        frame = frame.astype(np.uint8)
+    if template.dtype != np.uint8:
+        template = template.astype(np.uint8)
+    
+    # 如果frame是4通道（BGRA），转换为3通道（BGR）
+    if len(frame.shape) == 3 and frame.shape[2] == 4:
+        frame = frame[:, :, :3]
+    
+    # 如果template是4通道（BGRA），转换为3通道（BGR）
+    if len(template.shape) == 3 and template.shape[2] == 4:
+        template = template[:, :, :3]
+    
+    # 使用更快的匹配算法 TM_CCOEFF_NORMED
+    result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+
+    # 找到最佳匹配位置
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+    # 检查匹配度是否达到阈值
+    if max_val >= threshold:
+        top_left = max_loc
+        h, w = template.shape[:2]
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        return top_left, bottom_right
+    else:
+        return None
+
+
+# def single_match_new(frame, template, threshold=0.8):
+#     """
+#     从游戏画面图片中匹配某些元素，支持透明度处理
+
+#     :param frame: 游戏画面图片 (BGR格式)
+#     :param template: 模板图片，支持透明度 (BGRA格式)
+#     :param threshold: 匹配阈值，范围0-1，默认0.8
+#     :return: (top_left, bottom_right) 匹配元素的左上角和右下角坐标，如果未找到则返回None
+#     """
+
+#     # 检查输入参数
+#     if frame is None or template is None:
+#         return None
+
+#     # 获取模板图片的通道数
+#     template_channels = template.shape[2] if len(template.shape) > 2 else 1
+
+#     # 如果模板是灰度图，转换为BGR
+#     if template_channels == 1:
+#         template = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
+#         template_channels = 3
+
+#     # 如果模板有透明度通道 (BGRA)
+#     if template_channels == 4:
+#         return _match_with_alpha(frame, template, threshold)
+#     # 如果模板是BGR格式
+#     elif template_channels == 3:
+#         return _match_without_alpha(frame, template, threshold)
+#     else:
+#         raise ValueError(f"不支持的模板图片格式，通道数: {template_channels}")
+
+
+def _match_with_alpha(frame, template, threshold):
+    """
+    处理带有透明度的模板匹配
+    """
+    # 分离BGRA通道
+    bgr = template[:, :, :3]
+    alpha = template[:, :, 3] / 255.0  # 归一化到0-1
+
+    # 创建掩码，只匹配非透明区域
+    mask = alpha > 0.1  # 透明度阈值，可以调整
+
+    # 使用掩码进行模板匹配
+    result = cv2.matchTemplate(frame, bgr, cv2.TM_CCORR_NORMED, mask=mask.astype(np.uint8))
+
+    # 找到最佳匹配位置
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+    # 检查匹配度是否达到阈值
+    if max_val >= threshold:
+        top_left = max_loc
+        h, w = template.shape[:2]
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        return top_left, bottom_right
+    else:
+        return None
+
+
+def _match_without_alpha(frame, template, threshold):
+    """
+    处理不带透明度的模板匹配
+    """
+    # 使用归一化相关系数进行匹配
+    result = cv2.matchTemplate(frame, template, cv2.TM_CCORR_NORMED)
+
+    # 找到最佳匹配位置
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+
+    # 检查匹配度是否达到阈值
+    if max_val >= threshold:
+        top_left = max_loc
+        h, w = template.shape[:2]
+        bottom_right = (top_left[0] + w, top_left[1] + h)
+        return top_left, bottom_right
+    else:
+        return None
 
 
 def multi_match(frame, template, threshold=0.95):
@@ -110,6 +293,115 @@ def multi_match(frame, template, threshold=0.95):
         results.append((x, y))
     return results
 
+def multi_match_new(frame, template, threshold=0.8, max_results=10):
+    """
+    从游戏画面图片中匹配多个相同元素
+
+    :param frame: 游戏画面图片 (BGR格式)
+    :param template: 模板图片，支持透明度 (BGRA格式)
+    :param threshold: 匹配阈值，范围0-1，默认0.8
+    :param max_results: 最大返回结果数量，默认10
+    :return: [(top_left, bottom_right), ...] 匹配元素的坐标列表，如果未找到则返回空列表
+    """
+    # 快速参数检查
+    if frame is None or template is None:
+        return []
+
+    # 快速获取模板图片的通道数
+    template_shape = template.shape
+    if len(template_shape) == 2:
+        # 灰度图，转换为BGR
+        template = cv2.cvtColor(template, cv2.COLOR_GRAY2BGR)
+        return _multi_match_without_alpha(frame, template, threshold, max_results)
+    elif len(template_shape) == 3:
+        template_channels = template_shape[2]
+        if template_channels == 3:
+            # BGR格式
+            return _multi_match_without_alpha(frame, template, threshold, max_results)
+        elif template_channels == 4:
+            # BGRA格式
+            return _multi_match_with_alpha(frame, template, threshold, max_results)
+        else:
+            raise ValueError(f"不支持的模板图片格式，通道数: {template_channels}")
+    else:
+        raise ValueError(f"不支持的模板图片格式，维度数: {len(template_shape)}")
+
+def _multi_match_with_alpha(frame, template, threshold, max_results):
+    """
+    处理带有透明度的多模板匹配
+    """
+    # 分离BGRA通道
+    bgr = template[:, :, :3].astype(np.uint8)
+    alpha = template[:, :, 3].astype(np.uint8)
+    
+    # 创建掩码
+    mask = (alpha > 25).astype(np.uint8)
+
+    # 确保frame也是uint8类型
+    if frame.dtype != np.uint8:
+        frame = frame.astype(np.uint8)
+
+    # 如果frame是4通道（BGRA），转换为3通道（BGR）
+    if len(frame.shape) == 3 and frame.shape[2] == 4:
+        frame = frame[:, :, :3]
+
+    # 使用TM_CCOEFF_NORMED进行匹配
+    result = cv2.matchTemplate(frame, bgr, cv2.TM_CCOEFF_NORMED, mask=mask)
+    
+    return _find_multiple_matches(result, threshold, max_results, template.shape)
+
+def _multi_match_without_alpha(frame, template, threshold, max_results):
+    """
+    处理不带透明度的多模板匹配
+    """
+    # 确保数据类型正确
+    if frame.dtype != np.uint8:
+        frame = frame.astype(np.uint8)
+    if template.dtype != np.uint8:
+        template = template.astype(np.uint8)
+    
+    # 如果frame是4通道（BGRA），转换为3通道（BGR）
+    if len(frame.shape) == 3 and frame.shape[2] == 4:
+        frame = frame[:, :, :3]
+    
+    # 如果template是4通道（BGRA），转换为3通道（BGR）
+    if len(template.shape) == 3 and template.shape[2] == 4:
+        template = template[:, :, :3]
+    
+    # 使用TM_CCOEFF_NORMED进行匹配
+    result = cv2.matchTemplate(frame, template, cv2.TM_CCOEFF_NORMED)
+    
+    return _find_multiple_matches(result, threshold, max_results, template.shape)
+
+def _find_multiple_matches(result, threshold, max_results, template_shape):
+    """
+    从匹配结果中找到多个匹配位置
+    """
+    matches = []
+    h, w = template_shape[:2]
+    
+    # 找到所有超过阈值的匹配位置
+    locations = np.where(result >= threshold)
+    
+    for pt in zip(*locations[::-1]):  # 转换坐标格式
+        if len(matches) >= max_results:
+            break
+            
+        # 检查是否与已有匹配重叠
+        is_duplicate = False
+        for existing_match in matches:
+            existing_pt = existing_match[0]
+            # 如果两个匹配位置距离太近，认为是重复的
+            if abs(pt[0] - existing_pt[0]) < w//2 and abs(pt[1] - existing_pt[1]) < h//2:
+                is_duplicate = True
+                break
+        
+        if not is_duplicate:
+            top_left = pt
+            bottom_right = (pt[0] + w, pt[1] + h)
+            matches.append((top_left, bottom_right))
+    
+    return matches
 
 def convert_to_relative(point, frame):
     """
@@ -246,6 +538,7 @@ class Async(threading.Thread):
                 self.queue.get_nowait()
             except queue.Empty:
                 root.after(100, self.process_queue(root))
+
         return f
 
 
@@ -256,4 +549,5 @@ def async_callback(context, function, *args, **kwargs):
         task = Async(function, *args, **kwargs)
         task.start()
         context.after(100, task.process_queue(context))
+
     return f
